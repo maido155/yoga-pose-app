@@ -1,101 +1,305 @@
-import Image from "next/image";
+"use client";  // Para usar Hooks y APIs del navegador en Next.js 13 (App Router)
 
-export default function Home() {
+import React, { useEffect, useRef, useState } from "react";
+import { Pose as PoseType, Results } from "@mediapipe/pose/pose";
+type Camera = any; // Podrías crear tu propia definición en lugar de 'any'
+
+// 1. Definimos la secuencia de Surya Namaskar A (versión simplificada)
+const SURYA_A_SEQUENCE = [
+  "Samasthiti", 
+  "Urdhva Vriksasana", 
+  "Uttanasana",
+  "Ardha Uttanasana",
+  "Chaturanga Dandasana",
+  "Urdhva Mukha Svanasana",
+  "Adho Mukha Svanasana",
+  "Ardha Uttanasana",
+  "Uttanasana",
+  "Urdhva Vriksasana",
+  "Samasthiti"
+];
+
+export default function HomePage() {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const [poseDetector, setPoseDetector] = useState<PoseType | null>(null);
+  const [camera, setCamera] = useState<Camera | null>(null);
+
+  // Estados para la secuencia y conteo
+  const [sequenceIndex, setSequenceIndex] = useState(0);
+  const [repetitions, setRepetitions] = useState(0);
+  const [currentPose, setCurrentPose] = useState("None");
+
+  // Agregar nuevos estados
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDevice, setSelectedDevice] = useState<string>("");
+  const [isStarted, setIsStarted] = useState(false);
+
+  // Agregar efecto para obtener las cámaras disponibles
+  useEffect(() => {
+    navigator.mediaDevices.enumerateDevices()
+      .then(devices => {
+        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+        setDevices(videoDevices);
+        if (videoDevices.length > 0) {
+          setSelectedDevice(videoDevices[0].deviceId);
+        }
+      });
+  }, []);
+
+  // 2. Inicializar MediaPipe Pose
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      import("@mediapipe/pose").then(({ Pose }) => {
+        const pose = new Pose({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
+        });
+
+        pose.setOptions({
+          modelComplexity: 1,
+          smoothLandmarks: true,
+          enableSegmentation: false,
+          smoothSegmentation: false,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+        });
+
+        pose.onResults(onResults);
+        setPoseDetector(pose);
+      });
+    }
+  }, []);
+
+  // Modificar el efecto de la cámara para manejar mejor el dispositivo seleccionado
+  useEffect(() => {
+    if (poseDetector && !camera && isStarted && selectedDevice) {
+      const videoElement = videoRef.current;
+      const canvasElement = canvasRef.current;
+
+      if (videoElement && canvasElement) {
+        // Primero obtener el stream específico para el dispositivo seleccionado
+        navigator.mediaDevices.getUserMedia({
+          video: {
+            deviceId: { exact: selectedDevice },
+            width: 640,
+            height: 480
+          }
+        }).then((stream) => {
+          videoElement.srcObject = stream;
+          videoElement.addEventListener("loadedmetadata", () => {
+            canvasElement.width = videoElement.videoWidth;
+            canvasElement.height = videoElement.videoHeight;
+          });
+
+          import("@mediapipe/camera_utils").then(({ Camera }) => {
+            const newCamera = new Camera(videoElement, {
+              onFrame: async () => {
+                if (poseDetector) {
+                  await poseDetector.send({ image: videoElement });
+                }
+              },
+              width: 640,
+              height: 480,
+            });
+            newCamera.start();
+            setCamera(newCamera);
+          });
+        }).catch(err => {
+          console.error("Error accessing camera:", err);
+        });
+      }
+    }
+
+    // Cleanup function
+    return () => {
+      if (camera) {
+        camera.stop();
+      }
+      if (videoRef.current?.srcObject) {
+        const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
+        tracks.forEach(track => track.stop());
+        videoRef.current.srcObject = null;
+      }
+    };
+  }, [poseDetector, camera, selectedDevice, isStarted]);
+
+  // 4. Función onResults: callback de MediaPipe
+  function onResults(results: Results) {
+    const canvasElement = canvasRef.current;
+    if (!canvasElement) return;
+
+    const canvasCtx = canvasElement.getContext("2d");
+    if (!canvasCtx) return;
+
+    // Dibujar la imagen en el canvas
+    canvasCtx.save();
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+    // Si hay landmarks, los dibujamos y detectamos la postura
+    if (results.poseLandmarks) {
+      drawLandmarks(canvasCtx, results.poseLandmarks, canvasElement);
+      const poseName = detectPoseName(results.poseLandmarks, canvasElement.width, canvasElement.height);
+      setCurrentPose(poseName);
+      
+      // Actualizar secuencia
+      updateSequence(poseName);
+    }
+
+    canvasCtx.restore();
+  }
+
+  // 5. Dibujo de landmarks en el canvas
+  function drawLandmarks(
+    ctx: CanvasRenderingContext2D,
+    landmarks: Results["poseLandmarks"],
+    canvas: HTMLCanvasElement
+  ) {
+    if (!landmarks) return;
+    ctx.fillStyle = "red";
+
+    // Dibuja un círculo en cada landmark
+    for (let i = 0; i < landmarks.length; i++) {
+      const { x, y } = landmarks[i];
+      const px = x * canvas.width;
+      const py = y * canvas.height;
+
+      ctx.beginPath();
+      ctx.arc(px, py, 5, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  }
+
+  // 6. Función para detectar el nombre de la postura actual
+  function detectPoseName(
+    landmarks: Results["poseLandmarks"],
+    canvasWidth: number,
+    canvasHeight: number
+  ): string {
+    if (!landmarks) return "Unknown";
+
+    // Aquí podrías calcular ángulos y distancias
+    // Ejemplo: detección muy simple usando cadera/hombros
+    const leftShoulder = landmarks[11];  // PoseLandmark.LEFT_SHOULDER = 11
+    const rightShoulder = landmarks[12]; // PoseLandmark.RIGHT_SHOULDER = 12
+    const leftHip = landmarks[23];      // PoseLandmark.LEFT_HIP = 23
+    const rightHip = landmarks[24];     // PoseLandmark.RIGHT_HIP = 24
+
+    // Distancia horizontal entre hombros
+    const shoulderDist = Math.abs(leftShoulder.x - rightShoulder.x);
+
+    // Distancia vertical hombro-cadera
+    const torsoHeight = Math.abs(leftShoulder.y - leftHip.y);
+
+    // Un ejemplo: si hombros están muy juntos y caderas y hombros están a la misma altura,
+    // podríamos inferir algo como Samasthiti
+    // ¡Estos valores son 100% arbitrarios para la DEMO!
+    if (shoulderDist < 0.03 && torsoHeight > 0.2) {
+      return "Samasthiti";
+    }
+    // Ejemplo: si hombros muy separados y cadera a menor Y (brazo alzado)
+    else if (shoulderDist > 0.06 && torsoHeight < 0.15) {
+      return "Urdhva Vriksasana";
+    }
+    // etc. 
+    // Añade más funciones o reglas para Uttanasana, Chaturanga, etc.
+    // Normalmente usarías "calculateAngle" para hombro-codo-muñeca, cadera-rodilla-tobillo, etc.
+
+    return "Unknown";
+  }
+
+  // 7. Lógica para actualizar la secuencia y contar repeticiones
+  function updateSequence(currentDetectedPose: string) {
+    // Si la postura detectada coincide con la que esperamos en SURYA_A_SEQUENCE[sequenceIndex]
+    if (currentDetectedPose === SURYA_A_SEQUENCE[sequenceIndex]) {
+      // Avanzar al siguiente
+      const nextIndex = sequenceIndex + 1;
+      // Si llegamos al final de la secuencia, incrementamos repeticiones y volvemos a 0
+      if (nextIndex >= SURYA_A_SEQUENCE.length) {
+        setRepetitions((prev) => prev + 1);
+        setSequenceIndex(0);
+      } else {
+        setSequenceIndex(nextIndex);
+      }
+    }
+  }
+
+  // Función actualizada para cambiar de cámara
+  const handleDeviceChange = async (deviceId: string) => {
+    // Detener la cámara actual si existe
+    if (camera) {
+      camera.stop();
+      setCamera(null);
+    }
+    
+    // Detener el stream de video actual si existe
+    if (videoRef.current?.srcObject) {
+      const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
+      tracks.forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+    }
+
+    setSelectedDevice(deviceId);
+
+    // Si estamos en modo iniciado, reiniciamos la cámara automáticamente
+    if (isStarted) {
+      setIsStarted(false);
+      setTimeout(() => setIsStarted(true), 100);
+    }
+  };
+
+  // Función para iniciar/detener
+  const handleStartStop = () => {
+    if (isStarted && camera) {
+      camera.stop();
+      setCamera(null);
+    }
+    setIsStarted(!isStarted);
+  };
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+    <main className="w-full h-screen flex flex-col items-center justify-center">
+      <h1 className="text-2xl mb-4">Surya Namaskar A (Next 13 + TS + MediaPipe)</h1>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+      <div className="mb-4 flex gap-4 items-center">
+        <select 
+          value={selectedDevice}
+          onChange={(e) => handleDeviceChange(e.target.value)}
+          className="p-2 border rounded"
+          disabled={isStarted}
         >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+          {devices.map((device) => (
+            <option key={device.deviceId} value={device.deviceId}>
+              {device.label || `Camera ${device.deviceId}`}
+            </option>
+          ))}
+        </select>
+
+        <button
+          onClick={handleStartStop}
+          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
         >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+          {isStarted ? 'Stop' : 'Start'}
+        </button>
+      </div>
+
+      <div className="mb-2">
+        <p>Current Pose: <strong>{currentPose}</strong></p>
+        <p>Sequence step: {sequenceIndex} / {SURYA_A_SEQUENCE.length - 1}</p>
+        <p>Repetitions: {repetitions}</p>
+      </div>
+
+      {/* Contenedor relativo para superponer canvas sobre video */}
+      <div style={{ position: "relative" }}>
+        <video
+          ref={videoRef}
+          style={{ display: "none" }}
+          autoPlay
+          playsInline
+        />
+        <canvas ref={canvasRef} />
+      </div>
+    </main>
   );
 }
