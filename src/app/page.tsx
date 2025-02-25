@@ -6,9 +6,9 @@ import React, { useEffect, useRef, useState } from "react";
 import Pose from "@mediapipe/pose/pose";
 type Camera = any; // Podrías crear tu propia definición en lugar de 'any'
 
-// Agregar esta definición de tipo después de las importaciones
+// Actualizar la definición del tipo Results
 type Results = {
-  image: HTMLCanvasElement | HTMLImageElement | HTMLVideoElement;
+  image: HTMLCanvasElement | HTMLImageElement | HTMLVideoElement | ImageBitmap | GpuBuffer;
   poseLandmarks?: {
     x: number;
     y: number;
@@ -16,6 +16,12 @@ type Results = {
     visibility?: number;
   }[];
 };
+
+// También necesitamos definir GpuBuffer ya que no está disponible globalmente
+interface GpuBuffer {
+  width: number;
+  height: number;
+}
 
 // 1. Definimos la secuencia de Surya Namaskar A (versión simplificada)
 const SURYA_A_SEQUENCE = [
