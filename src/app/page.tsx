@@ -154,7 +154,14 @@ export default function HomePage() {
     // Dibujar la imagen en el canvas
     canvasCtx.save();
     canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-    canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+    
+    // Asegurarnos de que la imagen sea de un tipo compatible con drawImage
+    if (results.image instanceof HTMLCanvasElement ||
+        results.image instanceof HTMLImageElement ||
+        results.image instanceof HTMLVideoElement ||
+        results.image instanceof ImageBitmap) {
+      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+    }
 
     // Si hay landmarks, los dibujamos y detectamos la postura
     if (results.poseLandmarks) {
