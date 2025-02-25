@@ -25,7 +25,7 @@ export default function HomePage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const [poseDetector, setPoseDetector] = useState<Pose | null>(null);
+  const [poseDetector, setPoseDetector] = useState<typeof Pose | null>(null);
   const [camera, setCamera] = useState<Camera | null>(null);
 
   // Estados para la secuencia y conteo
