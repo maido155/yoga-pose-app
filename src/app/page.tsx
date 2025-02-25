@@ -57,13 +57,22 @@ export default function HomePage() {
 
   // Agregar efecto para obtener las cámaras disponibles
   useEffect(() => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+      console.error("mediaDevices API no está soportada en este navegador");
+      return;
+    }
+
     navigator.mediaDevices.enumerateDevices()
       .then(devices => {
         const videoDevices = devices.filter(device => device.kind === 'videoinput');
+        console.log("Cámaras disponibles:", videoDevices);
         setDevices(videoDevices);
         if (videoDevices.length > 0) {
           setSelectedDevice(videoDevices[0].deviceId);
         }
+      })
+      .catch(err => {
+        console.error("Error al enumerar dispositivos:", err);
       });
   }, []);
 
@@ -90,47 +99,55 @@ export default function HomePage() {
     }
   }, []);
 
-  // Modificar el efecto de la cámara para manejar mejor el dispositivo seleccionado
+  // Modificar el efecto de la cámara
   useEffect(() => {
     if (poseDetector && !camera && isStarted && selectedDevice) {
       const videoElement = videoRef.current;
       const canvasElement = canvasRef.current;
 
       if (videoElement && canvasElement) {
-        // Primero obtener el stream específico para el dispositivo seleccionado
-        navigator.mediaDevices.getUserMedia({
+        const constraints = {
           video: {
-            deviceId: { exact: selectedDevice },
+            deviceId: selectedDevice ? { exact: selectedDevice } : undefined,
             width: 640,
-            height: 480
+            height: 480,
+            facingMode: 'user' // Esto ayuda en móviles
           }
-        }).then((stream) => {
-          videoElement.srcObject = stream;
-          videoElement.addEventListener("loadedmetadata", () => {
-            canvasElement.width = videoElement.videoWidth;
-            canvasElement.height = videoElement.videoHeight;
-          });
+        };
 
-          import("@mediapipe/camera_utils").then(({ Camera }) => {
-            const newCamera = new Camera(videoElement, {
-              onFrame: async () => {
-                if (poseDetector) {
-                  await poseDetector.send({ image: videoElement });
-                }
-              },
-              width: 640,
-              height: 480,
+        console.log("Intentando acceder a la cámara con constraints:", constraints);
+
+        navigator.mediaDevices.getUserMedia(constraints)
+          .then((stream) => {
+            console.log("Stream obtenido exitosamente");
+            videoElement.srcObject = stream;
+            videoElement.addEventListener("loadedmetadata", () => {
+              canvasElement.width = videoElement.videoWidth;
+              canvasElement.height = videoElement.videoHeight;
             });
-            newCamera.start();
-            setCamera(newCamera);
+
+            import("@mediapipe/camera_utils").then(({ Camera }) => {
+              const newCamera = new Camera(videoElement, {
+                onFrame: async () => {
+                  if (poseDetector) {
+                    await poseDetector.send({ image: videoElement });
+                  }
+                },
+                width: 640,
+                height: 480,
+              });
+              newCamera.start();
+              setCamera(newCamera);
+            }).catch(err => {
+              console.error("Error al importar camera_utils:", err);
+            });
+          })
+          .catch(err => {
+            console.error("Error accediendo a la cámara:", err.name, err.message);
           });
-        }).catch(err => {
-          console.error("Error accessing camera:", err);
-        });
       }
     }
 
-    // Cleanup function
     return () => {
       if (camera) {
         camera.stop();
