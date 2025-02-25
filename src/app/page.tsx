@@ -1,7 +1,9 @@
 "use client";  // Para usar Hooks y APIs del navegador en Next.js 13 (App Router)
 
 import React, { useEffect, useRef, useState } from "react";
-import { Pose as PoseType, Results } from "@mediapipe/pose/pose";
+//import { Pose as Pose, Results } from "@mediapipe/pose/pose";
+// @ts-ignore
+import Pose from "@mediapipe/pose/pose";
 type Camera = any; // Podrías crear tu propia definición en lugar de 'any'
 
 // 1. Definimos la secuencia de Surya Namaskar A (versión simplificada)
@@ -23,7 +25,7 @@ export default function HomePage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const [poseDetector, setPoseDetector] = useState<PoseType | null>(null);
+  const [poseDetector, setPoseDetector] = useState<Pose | null>(null);
   const [camera, setCamera] = useState<Camera | null>(null);
 
   // Estados para la secuencia y conteo
