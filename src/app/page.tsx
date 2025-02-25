@@ -55,24 +55,32 @@ export default function HomePage() {
   const [selectedDevice, setSelectedDevice] = useState<string>("");
   const [isStarted, setIsStarted] = useState(false);
 
-  // Agregar efecto para obtener las cámaras disponibles
+  // Modificar el efecto para obtener las cámaras disponibles
   useEffect(() => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
       console.error("mediaDevices API no está soportada en este navegador");
       return;
     }
 
-    navigator.mediaDevices.enumerateDevices()
+    // Primero solicitamos acceso a la cámara
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(stream => {
+        // Detenemos el stream inicial ya que solo lo necesitamos para los permisos
+        stream.getTracks().forEach(track => track.stop());
+        
+        // Ahora enumeramos los dispositivos
+        return navigator.mediaDevices.enumerateDevices();
+      })
       .then(devices => {
         const videoDevices = devices.filter(device => device.kind === 'videoinput');
-        console.log("Cámaras disponibles:", videoDevices);
+        console.log("Cámaras disponibles después de permisos:", videoDevices);
         setDevices(videoDevices);
         if (videoDevices.length > 0) {
           setSelectedDevice(videoDevices[0].deviceId);
         }
       })
       .catch(err => {
-        console.error("Error al enumerar dispositivos:", err);
+        console.error("Error al obtener permisos o enumerar dispositivos:", err);
       });
   }, []);
 
@@ -99,7 +107,7 @@ export default function HomePage() {
     }
   }, []);
 
-  // Modificar el efecto de la cámara
+  // Modificar el efecto de la cámara para usar constraints más flexibles
   useEffect(() => {
     if (poseDetector && !camera && isStarted && selectedDevice) {
       const videoElement = videoRef.current;
@@ -108,10 +116,11 @@ export default function HomePage() {
       if (videoElement && canvasElement) {
         const constraints = {
           video: {
-            deviceId: selectedDevice ? { exact: selectedDevice } : undefined,
-            width: 640,
-            height: 480,
-            facingMode: 'user' // Esto ayuda en móviles
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            facingMode: 'user',
+            // Solo usar deviceId si no está vacío
+            ...(selectedDevice !== "" && { deviceId: { exact: selectedDevice } })
           }
         };
 
@@ -121,12 +130,18 @@ export default function HomePage() {
           .then((stream) => {
             console.log("Stream obtenido exitosamente");
             videoElement.srcObject = stream;
-            videoElement.addEventListener("loadedmetadata", () => {
-              canvasElement.width = videoElement.videoWidth;
-              canvasElement.height = videoElement.videoHeight;
+            
+            // Asegurarnos de que el video esté listo
+            return new Promise((resolve) => {
+              videoElement.onloadedmetadata = () => {
+                canvasElement.width = videoElement.videoWidth;
+                canvasElement.height = videoElement.videoHeight;
+                resolve(stream);
+              };
             });
-
-            import("@mediapipe/camera_utils").then(({ Camera }) => {
+          })
+          .then((stream) => {
+            return import("@mediapipe/camera_utils").then(({ Camera }) => {
               const newCamera = new Camera(videoElement, {
                 onFrame: async () => {
                   if (poseDetector) {
@@ -138,12 +153,10 @@ export default function HomePage() {
               });
               newCamera.start();
               setCamera(newCamera);
-            }).catch(err => {
-              console.error("Error al importar camera_utils:", err);
             });
           })
           .catch(err => {
-            console.error("Error accediendo a la cámara:", err.name, err.message);
+            console.error("Error en la configuración de la cámara:", err);
           });
       }
     }
